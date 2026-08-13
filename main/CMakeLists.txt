@@ -93,6 +93,13 @@ if(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C)
     set(EMOTE_EXTERNAL_PATH "${APOLLO_ASSETS_STAGING}")
 endif()
 
+if(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_06)
+    set(BOARD_DIR "waveshare/esp32-s3-touch-amoled-2.06")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_16_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+endif()
+
 
 if(NOT BOARD_DIR AND NOT CMAKE_BUILD_EARLY_EXPANSION)
     message(FATAL_ERROR "The selected board does not define BOARD_DIR")

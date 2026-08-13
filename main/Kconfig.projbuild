@@ -114,10 +114,13 @@ choice BOARD_TYPE
     prompt "Target Board"
     default BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C
     help
-        Apollo runs on exactly one board in this fork.
+        Apollo runs on the boards this fork has wired up.
 
     config BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C
         bool "Waveshare ESP32-S3-Touch-LCD-1.85C"
+        depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_06
+        bool "Waveshare ESP32-S3-Touch-AMOLED-2.06"
         depends on IDF_TARGET_ESP32S3
 endchoice
 
