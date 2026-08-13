@@ -147,7 +147,10 @@ private:
     PowerSaveTimer* power_save_timer_;
 
     void InitializePowerSaveTimer() {
-        power_save_timer_ = new PowerSaveTimer(-1, 60, 300);
+        // Desk device on USB power: dim after a minute, but never power off —
+        // the battery-less box reports "discharging" and the 300 s shutdown
+        // used to switch the whole device off mid-evening.
+        power_save_timer_ = new PowerSaveTimer(-1, 60);
         power_save_timer_->OnEnterSleepMode([this]() {
             GetDisplay()->SetPowerSaveMode(true);
             GetBacklight()->SetBrightness(20); });
