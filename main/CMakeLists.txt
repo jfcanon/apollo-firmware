@@ -249,7 +249,7 @@ if(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)
 endif()
 set(WAKE_WORD_MODEL_EMBED "")
 if(CONFIG_USE_MICRO_WAKE_WORD)
-    set(MICRO_WAKE_WORD_MODEL "hey_apolo.tflite" CACHE STRING "Model filename under main/assets/wakewords")
+    set(MICRO_WAKE_WORD_MODEL "hey_jarvis.tflite" CACHE STRING "Model filename under main/assets/wakewords")
     # Copied to a fixed name so the embed symbol stays stable across model swaps
     configure_file(${CMAKE_CURRENT_SOURCE_DIR}/assets/wakewords/${MICRO_WAKE_WORD_MODEL}
                    ${CMAKE_CURRENT_BINARY_DIR}/micro_wake_word_model.tflite COPYONLY)
