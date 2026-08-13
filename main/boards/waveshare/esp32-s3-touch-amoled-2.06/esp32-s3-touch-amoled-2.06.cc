@@ -19,6 +19,8 @@
 #include "settings.h"
 
 #include <esp_lcd_touch_ft5x06.h>
+#include "orb_face.h"
+#include <string_view>
 #include <esp_lvgl_port.h>
 #include <lvgl.h>
 
@@ -115,7 +117,43 @@ public:
         lv_obj_set_style_pad_left(status_bar_, LV_HOR_RES*  0.1, 0);
         lv_obj_set_style_pad_right(status_bar_, LV_HOR_RES*  0.1, 0);
         lv_display_add_event_cb(display_, rounder_event_cb, LV_EVENT_INVALIDATE_AREA, NULL);
+
+#ifdef CONFIG_APOLLO_PROTOCOL
+        // Jarvis face: the amber hologram orb replaces the emoji entirely.
+        if (emoji_box_ != nullptr) {
+            lv_obj_add_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (emoji_label_ != nullptr) {
+            lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (emoji_image_ != nullptr) {
+            lv_obj_add_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);
+        }
+        orb_face_.Create(content_ != nullptr ? content_ : container_, 300);
+#endif
     }
+
+#ifdef CONFIG_APOLLO_PROTOCOL
+    // Emotions become orb states; the emoji pipeline stays dormant.
+    virtual void SetEmotion(const char* emotion) override {
+        DisplayLockGuard lock(this);
+        OrbFace::State orb_state = OrbFace::State::kIdle;
+        if (emotion != nullptr) {
+            const std::string_view name(emotion);
+            if (name == "curious") {
+                orb_state = OrbFace::State::kListening;
+            } else if (name == "focused" || name == "questioning" || name == "thinking") {
+                orb_state = OrbFace::State::kThinking;
+            } else if (name == "talking") {
+                orb_state = OrbFace::State::kSpeaking;
+            }
+        }
+        orb_face_.SetState(orb_state);
+    }
+
+private:
+    OrbFace orb_face_;
+#endif
 };
 
 class CustomBacklight : public Backlight {
