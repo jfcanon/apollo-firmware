@@ -119,6 +119,19 @@ public:
         lv_display_add_event_cb(display_, rounder_event_cb, LV_EVENT_INVALIDATE_AREA, NULL);
 
 #ifdef CONFIG_APOLLO_PROTOCOL
+        // Hologram stage: pure black everywhere behind the orb.
+        lv_obj_set_style_bg_color(lv_screen_active(), lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, 0);
+        if (container_ != nullptr) {
+            lv_obj_set_style_bg_color(container_, lv_color_black(), 0);
+        }
+        if (content_ != nullptr) {
+            lv_obj_set_style_bg_color(content_, lv_color_black(), 0);
+            lv_obj_set_style_bg_opa(content_, LV_OPA_COVER, 0);
+        }
+        if (status_bar_ != nullptr) {
+            lv_obj_set_style_bg_color(status_bar_, lv_color_black(), 0);
+        }
         // Jarvis face: the amber hologram orb replaces the emoji entirely.
         if (emoji_box_ != nullptr) {
             lv_obj_add_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
@@ -150,6 +163,11 @@ public:
         }
         orb_face_.SetState(orb_state);
     }
+
+    // Standby hooks driven by the board's PowerSaveTimer: dark the orb on idle,
+    // resume it on wake.
+    void SleepFace() { orb_face_.Sleep(); }
+    void WakeFace() { orb_face_.Wake(); }
 
 private:
     OrbFace orb_face_;
@@ -185,16 +203,26 @@ private:
     PowerSaveTimer* power_save_timer_;
 
     void InitializePowerSaveTimer() {
-        // Desk device on USB power: dim after a minute, but never power off —
-        // the battery-less box reports "discharging" and the 300 s shutdown
-        // used to switch the whole device off mid-evening.
+        // Desk device: after a minute idle the screen goes fully dark (panel
+        // power-save + brightness 0 + orb render paused) and stays that way on
+        // USB power too — this box reads "charging", so the old discharging gate
+        // (see GetBatteryLevel) meant it never slept while plugged in. Never
+        // powers the whole device off (no shutdown timer configured).
         power_save_timer_ = new PowerSaveTimer(-1, 60);
         power_save_timer_->OnEnterSleepMode([this]() {
             GetDisplay()->SetPowerSaveMode(true);
-            GetBacklight()->SetBrightness(20); });
+            GetBacklight()->SetBrightness(0);
+#ifdef CONFIG_APOLLO_PROTOCOL
+            display_->SleepFace();
+#endif
+        });
         power_save_timer_->OnExitSleepMode([this]() {
             GetDisplay()->SetPowerSaveMode(false);
-            GetBacklight()->RestoreBrightness(); });
+            GetBacklight()->RestoreBrightness();
+#ifdef CONFIG_APOLLO_PROTOCOL
+            display_->WakeFace();
+#endif
+        });
         power_save_timer_->OnShutdownRequest([this](){ 
             pmic_->PowerOff(); });
         power_save_timer_->SetEnabled(true);
@@ -410,15 +438,12 @@ public:
     }
 
     virtual bool GetBatteryLevel(int &level, bool &charging, bool &discharging) override {
-        static bool last_discharging = false;
         charging = pmic_->IsCharging();
         discharging = pmic_->IsDischarging();
-        if (discharging != last_discharging)
-        {
-            power_save_timer_->SetEnabled(discharging);
-            last_discharging = discharging;
-        }
-
+        // Intentionally NOT gating the power-save timer on `discharging`: this
+        // desk box reads "charging" on USB, and the old gate disabled sleep
+        // whenever plugged in, so the orb never darkened. The timer stays enabled
+        // (InitializePowerSaveTimer) regardless of power source.
         level = pmic_->GetBatteryLevel();
         return true;
     }

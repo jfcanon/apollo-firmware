@@ -18,6 +18,12 @@ public:
 
     void SetState(State state);
 
+    // Standby: pause the frame timer and draw nothing (the black stage stays),
+    // so the panel goes dark on idle instead of holding a lit orb. Wake()
+    // resumes. Cheap — no widget teardown, no re-Create.
+    void Sleep();
+    void Wake();
+
 private:
     static void DrawEventCallback(lv_event_t* event);
     static void TimerCallback(lv_timer_t* timer);
@@ -26,6 +32,7 @@ private:
     lv_obj_t* orb_object_ = nullptr;
     lv_timer_t* frame_timer_ = nullptr;
     State state_ = State::kIdle;
+    bool sleeping_ = false;
     float rotation_radians_ = 0.0f;
     float pulse_phase_ = 0.0f;
     int32_t diameter_ = 300;
