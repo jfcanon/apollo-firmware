@@ -202,13 +202,25 @@ private:
     CustomBacklight* backlight_;
     PowerSaveTimer* power_save_timer_;
 
+    // Half an hour of untouched idle on battery is a device nobody is using;
+    // the PWR button brings it back.
+    static constexpr int kSecondsToShutdown = 1800;
+
     void InitializePowerSaveTimer() {
         // Desk device: after a minute idle the screen goes fully dark (panel
         // power-save + brightness 0 + orb render paused) and stays that way on
         // USB power too — this box reads "charging", so the old discharging gate
-        // (see GetBatteryLevel) meant it never slept while plugged in. Never
-        // powers the whole device off (no shutdown timer configured).
-        power_save_timer_ = new PowerSaveTimer(-1, 60);
+        // (see GetBatteryLevel) meant it never slept while plugged in.
+        //
+        // The first argument is the CPU ceiling, and passing -1 skips the whole
+        // low-power branch in PowerSaveTimer: wake word, microphone and CPU
+        // frequency were all left running, so a dark screen still drained the
+        // battery in under two hours. Passing the real ceiling turns idle into
+        // 40 MHz + light sleep with the wake word and codec input off. The
+        // consequence is deliberate and was accepted by the owner: "Hey Jarvis"
+        // does NOT wake a sleeping box — the button does (OnPressDown raises the
+        // power-save level, which calls WakeUp below).
+        power_save_timer_ = new PowerSaveTimer(240, 60, kSecondsToShutdown);
         power_save_timer_->OnEnterSleepMode([this]() {
             GetDisplay()->SetPowerSaveMode(true);
             GetBacklight()->SetBrightness(0);
@@ -223,8 +235,15 @@ private:
             display_->WakeFace();
 #endif
         });
-        power_save_timer_->OnShutdownRequest([this](){ 
-            pmic_->PowerOff(); });
+        // Only ever powers off on battery: docked, the box must stay reachable
+        // no matter how long it sits idle.
+        power_save_timer_->OnShutdownRequest([this]() {
+            if (!pmic_->IsDischarging()) {
+                return;
+            }
+            ESP_LOGI(TAG, "Idle on battery for %d s, powering off", kSecondsToShutdown);
+            pmic_->PowerOff();
+        });
         power_save_timer_->SetEnabled(true);
     }
 

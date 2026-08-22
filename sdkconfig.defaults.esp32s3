@@ -39,3 +39,22 @@ CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=1536
 CONFIG_LV_USE_SNAPSHOT=y
 
 CONFIG_APOLLO_PROTOCOL=y
+
+# --- Power management (battery life) ---
+# Without PM_ENABLE the CPU is pinned at 240 MHz forever and esp_pm_configure()
+# is a no-op, so the board's PowerSaveTimer could dim the panel but never idle
+# the chip: an "idle" desk box drew nearly as much as a talking one and died in
+# under two hours. With PM + tickless idle the scheduler drops to 40 MHz and
+# light-sleeps between ticks whenever no task is runnable.
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+CONFIG_FREERTOS_IDLE_TIME_BEFORE_SLEEP=3
+# Keep the sleep/wake and Wi-Fi sleep paths in IRAM: without this every wake
+# pays a flash-cache miss, which eats the savings on short idle windows.
+CONFIG_PM_SLP_IRAM_OPT=y
+CONFIG_PM_RTOS_IDLE_OPT=y
+CONFIG_ESP_WIFI_SLP_IRAM_OPT=y
+# PSRAM is powered from an external regulator that leaks in light sleep unless
+# the workaround holds it up; without it octal PSRAM can come back corrupted.
+CONFIG_ESP_SLEEP_PSRAM_LEAKAGE_WORKAROUND=y
+CONFIG_ESP_SLEEP_FLASH_LEAKAGE_WORKAROUND=y

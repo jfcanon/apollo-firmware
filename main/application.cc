@@ -1664,9 +1664,21 @@ bool Application::CanEnterSleepMode() {
         return false;
     }
 
+#ifdef CONFIG_APOLLO_PROTOCOL
+    // The Apollo protocol keeps the audio channel open while idle on purpose
+    // (see the idle reopen above: opening it costs ~3 s, longer than a
+    // press-and-hold lasts). Treating that open channel as "busy" made
+    // CanEnterSleepMode permanently false, so the power save timer never fired
+    // once — no dark screen, no wake-word gating, no light sleep — and the box
+    // drew full idle current until the battery died. An open-but-quiet channel
+    // survives light sleep: Wi-Fi stays associated in modem sleep and inbound
+    // frames wake the CPU. Only a channel with audio actually moving blocks
+    // sleep, and the device-state check above already covers that.
+#else
     if (protocol_ && protocol_->IsAudioChannelOpened()) {
         return false;
     }
+#endif
 
     if (!audio_service_.IsIdle()) {
         return false;
