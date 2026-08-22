@@ -19,6 +19,9 @@
 #include "settings.h"
 
 #include <esp_lcd_touch_ft5x06.h>
+#include <wifi_manager.h>
+
+#include "menu_layer.h"
 #include "orb_face.h"
 #include <string_view>
 #include <esp_lvgl_port.h>
@@ -169,8 +172,22 @@ public:
     void SleepFace() { orb_face_.Sleep(); }
     void WakeFace() { orb_face_.Wake(); }
 
+    // Built after the touch panel exists, from the board: the menu needs board
+    // capabilities (wake, provisioning) the display has no business knowing.
+    void CreateMenu(MenuLayer::Callbacks callbacks) {
+        DisplayLockGuard lock(this);
+        menu_layer_.Create(std::move(callbacks));
+    }
+
+    // Going dark should also put the menu away, or it reappears mid-air on wake.
+    void DismissMenu() {
+        DisplayLockGuard lock(this);
+        menu_layer_.Dismiss();
+    }
+
 private:
     OrbFace orb_face_;
+    MenuLayer menu_layer_;
 #endif
 };
 
@@ -226,6 +243,7 @@ private:
             GetBacklight()->SetBrightness(0);
 #ifdef CONFIG_APOLLO_PROTOCOL
             display_->SleepFace();
+            display_->DismissMenu();
 #endif
         });
         power_save_timer_->OnExitSleepMode([this]() {
@@ -407,6 +425,24 @@ private:
         ESP_LOGI(TAG, "Touch panel initialized successfully");
     }
 
+#ifdef CONFIG_APOLLO_PROTOCOL
+    void InitializeMenu() {
+        MenuLayer::Callbacks callbacks;
+        // A tap is a wake source in its own right now: with the wake word gated
+        // off in power save, touch and the button are the only ways back.
+        callbacks.on_wake = [this]() { power_save_timer_->WakeUp(); };
+        callbacks.on_enter_wifi_config = [this]() { EnterWifiConfigMode(); };
+        callbacks.read_network_summary = []() -> std::string {
+            auto& wifi = WifiManager::GetInstance();
+            if (!wifi.IsConnected()) {
+                return "Sin red.\nAgregá el hotspot del teléfono para salir a internet.";
+            }
+            return wifi.GetSsid() + "\n" + wifi.GetIpAddress();
+        };
+        display_->CreateMenu(std::move(callbacks));
+    }
+#endif
+
     // 初始化工具
     void InitializeTools() {
         auto &mcp_server = McpServer::GetInstance();
@@ -429,6 +465,9 @@ public:
         InitializeTouch();
         InitializeButtons();
         InitializeTools();
+#ifdef CONFIG_APOLLO_PROTOCOL
+        InitializeMenu();
+#endif
     }
 
     virtual AudioCodec* GetAudioCodec() override {
