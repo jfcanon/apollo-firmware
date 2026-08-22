@@ -58,3 +58,10 @@ CONFIG_ESP_WIFI_SLP_IRAM_OPT=y
 # the workaround holds it up; without it octal PSRAM can come back corrupted.
 CONFIG_ESP_SLEEP_PSRAM_LEAKAGE_WORKAROUND=y
 CONFIG_ESP_SLEEP_FLASH_LEAKAGE_WORKAROUND=y
+
+# The on-device Wi-Fi picker needs these LVGL widgets: a list of scanned
+# networks and a keyboard for the password (menu_layer.cc).
+CONFIG_LV_USE_LIST=y
+CONFIG_LV_USE_KEYBOARD=y
+CONFIG_LV_USE_TEXTAREA=y
+CONFIG_LV_USE_BUTTONMATRIX=y

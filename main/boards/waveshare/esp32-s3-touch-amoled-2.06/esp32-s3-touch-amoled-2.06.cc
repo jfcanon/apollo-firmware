@@ -20,6 +20,8 @@
 
 #include <esp_lcd_touch_ft5x06.h>
 #include <wifi_manager.h>
+#include <ssid_manager.h>
+#include <esp_wifi.h>
 
 #include "menu_layer.h"
 #include "orb_face.h"
@@ -183,6 +185,11 @@ public:
     void DismissMenu() {
         DisplayLockGuard lock(this);
         menu_layer_.Dismiss();
+    }
+
+    // Caller holds the display lock (the scan task takes it).
+    void ShowNetworkList(const std::vector<MenuLayer::Network>& network_list) {
+        menu_layer_.ShowNetworkList(network_list);
     }
 
 private:
@@ -432,6 +439,25 @@ private:
         // off in power save, touch and the button are the only ways back.
         callbacks.on_wake = [this]() { power_save_timer_->WakeUp(); };
         callbacks.on_enter_wifi_config = [this]() { EnterWifiConfigMode(); };
+        // The scan runs on its own task: a blocking scan takes seconds, and
+        // running it inside the LVGL event handler would freeze the panel and
+        // starve the display timer.
+        callbacks.on_scan_request = [this]() {
+            xTaskCreate([](void* arg) {
+                auto* board = static_cast<WaveshareEsp32s3TouchAMOLED2inch06*>(arg);
+                board->RunNetworkScan();
+                vTaskDelete(NULL);
+            }, "hue_wifi_scan", 4096, this, 3, nullptr);
+        };
+        callbacks.on_join_network = [](const std::string& ssid, const std::string& password) {
+            // Saved first: SsidManager persists to NVS and the station retries
+            // saved networks on its own, so the credential survives a reboot in
+            // a house we may return to.
+            SsidManager::GetInstance().AddSsid(ssid, password);
+            auto& wifi = WifiManager::GetInstance();
+            wifi.StopStation();
+            wifi.StartStation();
+        };
         callbacks.read_network_summary = []() -> std::string {
             auto& wifi = WifiManager::GetInstance();
             if (!wifi.IsConnected()) {
@@ -442,6 +468,41 @@ private:
         display_->CreateMenu(std::move(callbacks));
     }
 #endif
+
+    // Blocking scan, called on the scan task only.
+    void RunNetworkScan() {
+        wifi_scan_config_t scan_config = {};
+        scan_config.show_hidden = false;
+        std::vector<MenuLayer::Network> network_list;
+        if (esp_wifi_scan_start(&scan_config, true) == ESP_OK) {
+            uint16_t found_count = 0;
+            esp_wifi_scan_get_ap_num(&found_count);
+            // The panel fits about a dozen rows; scanning a crowded building
+            // otherwise allocates a record for every AP in the block.
+            const uint16_t wanted_count = std::min<uint16_t>(found_count, 20);
+            if (wanted_count > 0) {
+                std::vector<wifi_ap_record_t> record_list(wanted_count);
+                uint16_t returned_count = wanted_count;
+                if (esp_wifi_scan_get_ap_records(&returned_count, record_list.data()) == ESP_OK) {
+                    for (uint16_t index = 0; index < returned_count; index++) {
+                        const auto& record = record_list[index];
+                        if (record.ssid[0] == '\0') {
+                            continue;
+                        }
+                        MenuLayer::Network network;
+                        network.ssid = reinterpret_cast<const char*>(record.ssid);
+                        network.rssi = record.rssi;
+                        network.secured = record.authmode != WIFI_AUTH_OPEN;
+                        network_list.push_back(std::move(network));
+                    }
+                }
+            }
+        } else {
+            ESP_LOGW(TAG, "Wi-Fi scan failed to start");
+        }
+        DisplayLockGuard lock(display_);
+        display_->ShowNetworkList(network_list);
+    }
 
     // 初始化工具
     void InitializeTools() {

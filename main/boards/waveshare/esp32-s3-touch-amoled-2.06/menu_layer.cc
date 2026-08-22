@@ -2,6 +2,8 @@
 
 #include <esp_log.h>
 
+#include <algorithm>
+
 #define TAG "MenuLayer"
 
 namespace {
@@ -73,8 +75,165 @@ void MenuLayer::Create(Callbacks callbacks) {
     lv_obj_set_style_text_color(configure_label, lv_color_hex(kAccentColor), 0);
     lv_obj_center(configure_label);
 
+    // "Buscar redes" sits next to provisioning: the AP portal needs a second
+    // device to drive it, and in someone else's house the phone is usually the
+    // thing that has no internet either.
+    lv_obj_t* scan_button = lv_button_create(wifi_panel_);
+    lv_obj_set_width(scan_button, LV_PCT(100));
+    lv_obj_set_style_bg_color(scan_button, lv_color_hex(kDimColor), 0);
+    lv_obj_add_event_cb(scan_button, ScanEventCallback, LV_EVENT_CLICKED, this);
+    lv_obj_t* scan_button_label = lv_label_create(scan_button);
+    lv_label_set_text(scan_button_label, "Buscar redes");
+    lv_obj_set_style_text_color(scan_button_label, lv_color_hex(kAccentColor), 0);
+    lv_obj_center(scan_button_label);
+
+    // Scan results.
+    scan_panel_ = lv_obj_create(catcher_);
+    lv_obj_set_size(scan_panel_, LV_PCT(86), LV_PCT(70));
+    lv_obj_align(scan_panel_, LV_ALIGN_CENTER, 0, -10);
+    lv_obj_set_style_bg_color(scan_panel_, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(scan_panel_, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(scan_panel_, lv_color_hex(kDimColor), 0);
+    lv_obj_set_style_border_width(scan_panel_, 2, 0);
+    lv_obj_set_style_radius(scan_panel_, 16, 0);
+    lv_obj_set_style_pad_all(scan_panel_, 10, 0);
+    lv_obj_set_flex_flow(scan_panel_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_flag(scan_panel_, LV_OBJ_FLAG_HIDDEN);
+
+    scan_status_label_ = lv_label_create(scan_panel_);
+    lv_obj_set_style_text_color(scan_status_label_, lv_color_hex(kAccentColor), 0);
+    lv_label_set_text(scan_status_label_, "");
+
+    scan_list_ = lv_list_create(scan_panel_);
+    lv_obj_set_width(scan_list_, LV_PCT(100));
+    lv_obj_set_flex_grow(scan_list_, 1);
+    lv_obj_set_style_bg_color(scan_list_, lv_color_black(), 0);
+    lv_obj_set_style_border_width(scan_list_, 0, 0);
+
+    // Password entry for the chosen network.
+    password_panel_ = lv_obj_create(catcher_);
+    lv_obj_set_size(password_panel_, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(password_panel_);
+    lv_obj_set_style_bg_color(password_panel_, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(password_panel_, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(password_panel_, 0, 0);
+    lv_obj_set_style_pad_all(password_panel_, 6, 0);
+    lv_obj_remove_flag(password_panel_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(password_panel_, LV_OBJ_FLAG_HIDDEN);
+
+    password_prompt_label_ = lv_label_create(password_panel_);
+    lv_obj_align(password_prompt_label_, LV_ALIGN_TOP_MID, 0, 2);
+    lv_obj_set_style_text_color(password_prompt_label_, lv_color_hex(kAccentColor), 0);
+    lv_label_set_text(password_prompt_label_, "");
+
+    password_input_ = lv_textarea_create(password_panel_);
+    lv_obj_set_width(password_input_, LV_PCT(94));
+    lv_obj_align(password_input_, LV_ALIGN_TOP_MID, 0, 28);
+    lv_textarea_set_one_line(password_input_, true);
+    lv_textarea_set_password_mode(password_input_, true);
+    lv_textarea_set_placeholder_text(password_input_, "Contrasena");
+
+    keyboard_ = lv_keyboard_create(password_panel_);
+    lv_obj_set_size(keyboard_, LV_PCT(100), LV_PCT(58));
+    lv_obj_align(keyboard_, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_keyboard_set_textarea(keyboard_, password_input_);
+    // READY commits the join, CANCEL backs out to the network list.
+    lv_obj_add_event_cb(keyboard_, KeyboardEventCallback, LV_EVENT_READY, this);
+    lv_obj_add_event_cb(keyboard_, KeyboardEventCallback, LV_EVENT_CANCEL, this);
+
     auto_hide_timer_ = lv_timer_create(AutoHideTimerCallback, kAutoHideMilliseconds, this);
     lv_timer_pause(auto_hide_timer_);
+}
+
+void MenuLayer::HidePanels() {
+    lv_obj_add_flag(wifi_panel_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(scan_panel_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(password_panel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void MenuLayer::ShowScanPanel() {
+    HidePanels();
+    lv_obj_clean(scan_list_);
+    lv_label_set_text(scan_status_label_, "Buscando redes...");
+    lv_obj_remove_flag(scan_panel_, LV_OBJ_FLAG_HIDDEN);
+    // A scan takes a couple of seconds and the result arrives on another task;
+    // the menu must not time out underneath it.
+    if (auto_hide_timer_ != nullptr) {
+        lv_timer_pause(auto_hide_timer_);
+    }
+    if (callbacks_.on_scan_request) {
+        callbacks_.on_scan_request();
+    }
+}
+
+void MenuLayer::ShowNetworkList(const std::vector<Network>& network_list) {
+    if (scan_list_ == nullptr) {
+        return;
+    }
+    lv_obj_clean(scan_list_);
+    if (network_list.empty()) {
+        lv_label_set_text(scan_status_label_, "No encontre redes. Proba de nuevo.");
+        return;
+    }
+    lv_label_set_text(scan_status_label_, "Elegi una red:");
+    for (const Network& network : network_list) {
+        lv_obj_t* button = lv_list_add_button(
+            scan_list_, network.secured ? LV_SYMBOL_WIFI : LV_SYMBOL_OK, network.ssid.c_str());
+        lv_obj_set_style_bg_color(button, lv_color_black(), 0);
+        lv_obj_set_style_text_color(button, lv_color_hex(kAccentColor), 0);
+        lv_obj_add_event_cb(button, NetworkChosenEventCallback, LV_EVENT_CLICKED, this);
+    }
+    lv_obj_remove_flag(scan_panel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void MenuLayer::ShowPasswordPanel(const std::string& ssid) {
+    pending_ssid_ = ssid;
+    HidePanels();
+    lv_textarea_set_text(password_input_, "");
+    const std::string prompt = "Clave de " + ssid;
+    lv_label_set_text(password_prompt_label_, prompt.c_str());
+    lv_obj_remove_flag(password_panel_, LV_OBJ_FLAG_HIDDEN);
+    if (auto_hide_timer_ != nullptr) {
+        lv_timer_pause(auto_hide_timer_);
+    }
+}
+
+void MenuLayer::ScanEventCallback(lv_event_t* event) {
+    auto* self = static_cast<MenuLayer*>(lv_event_get_user_data(event));
+    if (self->callbacks_.on_wake) {
+        self->callbacks_.on_wake();
+    }
+    self->ShowScanPanel();
+}
+
+void MenuLayer::NetworkChosenEventCallback(lv_event_t* event) {
+    auto* self = static_cast<MenuLayer*>(lv_event_get_user_data(event));
+    auto* button = static_cast<lv_obj_t*>(lv_event_get_target(event));
+    const char* ssid = lv_list_get_button_text(self->scan_list_, button);
+    if (ssid == nullptr) {
+        return;
+    }
+    if (self->callbacks_.on_wake) {
+        self->callbacks_.on_wake();
+    }
+    self->ShowPasswordPanel(ssid);
+}
+
+void MenuLayer::KeyboardEventCallback(lv_event_t* event) {
+    auto* self = static_cast<MenuLayer*>(lv_event_get_user_data(event));
+    if (lv_event_get_code(event) == LV_EVENT_CANCEL) {
+        self->HidePanels();
+        lv_obj_remove_flag(self->scan_panel_, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    const char* password = lv_textarea_get_text(self->password_input_);
+    const std::string ssid = self->pending_ssid_;
+    ESP_LOGI(TAG, "Joining %s from the menu", ssid.c_str());
+    lv_label_set_text(self->scan_status_label_, "Conectando...");
+    self->Dismiss();
+    if (self->callbacks_.on_join_network) {
+        self->callbacks_.on_join_network(ssid, password != nullptr ? password : "");
+    }
 }
 
 lv_obj_t* MenuLayer::BuildIconButton(lv_obj_t* parent, const char* symbol, const char* label_text) {
@@ -119,7 +278,7 @@ void MenuLayer::Dismiss() {
         lv_obj_add_flag(icon_row_, LV_OBJ_FLAG_HIDDEN);
     }
     if (wifi_panel_ != nullptr) {
-        lv_obj_add_flag(wifi_panel_, LV_OBJ_FLAG_HIDDEN);
+        HidePanels();
     }
     if (auto_hide_timer_ != nullptr) {
         lv_timer_pause(auto_hide_timer_);
