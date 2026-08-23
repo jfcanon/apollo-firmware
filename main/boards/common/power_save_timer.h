@@ -14,7 +14,13 @@ public:
     void OnEnterSleepMode(std::function<void()> callback);
     void OnExitSleepMode(std::function<void()> callback);
     void OnShutdownRequest(std::function<void()> callback);
-    void WakeUp();
+    // restore_wake_word=false leaves the microphone and the wake word off while
+    // bringing the screen and the CPU back: the PWR button is allowed to show
+    // the UI without putting Jarvis back on the air.
+    void WakeUp(bool restore_wake_word = true);
+    // Force the idle transition now instead of waiting out the countdown.
+    void EnterSleepModeNow();
+    bool IsInSleepMode() const { return in_sleep_mode_; }
 
 private:
     void PowerSaveCheck();

@@ -58,7 +58,28 @@ public:
         WriteReg(0x61, 0x02); // set Main battery precharge current to 50mA
         WriteReg(0x62, 0x0A); // set Main battery charger current to 400mA ( 0x08-200mA, 0x09-300mA, 0x0A-400mA )
         WriteReg(0x63, 0x01); // set Main battery term charge current to 25mA
+
+        // The PWR button is wired to the PMU's PWRON pin, not to a GPIO, so a
+        // short press is only visible as an AXP2101 interrupt. IRQ enable 2
+        // (0x41) bit 3 is PKEY_SHORT; the 4 s hold that powers the box off is
+        // configured above and stays untouched.
+        WriteReg(0x41, ReadReg(0x41) | kPowerKeyShortIrqBit);
+        WriteReg(0x49, kPowerKeyShortIrqBit);  // write-1-to-clear anything stale
     }
+
+    // True exactly once per short press. There is no IRQ line to the SoC on
+    // this board, so the board polls this.
+    bool TakePowerKeyShortPress() {
+        const uint8_t status = ReadReg(0x49);
+        if ((status & kPowerKeyShortIrqBit) == 0) {
+            return false;
+        }
+        WriteReg(0x49, kPowerKeyShortIrqBit);
+        return true;
+    }
+
+private:
+    static constexpr uint8_t kPowerKeyShortIrqBit = 0x08;
 };
 
 #define LCD_OPCODE_WRITE_CMD (0x02ULL)
@@ -185,6 +206,13 @@ public:
     void DismissMenu() {
         DisplayLockGuard lock(this);
         menu_layer_.Dismiss();
+    }
+
+    // Shown when the PWR button wakes the screen: the menu is the whole point
+    // of that press, since the wake word stays off.
+    void RevealMenu() {
+        DisplayLockGuard lock(this);
+        menu_layer_.Reveal();
     }
 
     // Caller holds the display lock (the scan task takes it).
@@ -326,6 +354,13 @@ private:
         // Wifi config stays reachable, but not behind a long press: holding the
         // button *is* the talk gesture, so a long press fires on every normal
         // use. Three clicks cannot be triggered by accident that way.
+        // Holding is also the talk gesture, so the hold that toggles the wake
+        // word has to cancel the listening its own press-down started.
+        boot_button_.OnLongPress([this]() {
+            Application::GetInstance().StopListening();
+            ToggleWakeWord();
+        });
+
         boot_button_.OnMultipleClick([this]() { EnterWifiConfigMode(); }, 3);
 #else
         boot_button_.OnClick([this]() {
@@ -469,6 +504,50 @@ private:
     }
 #endif
 
+    esp_timer_handle_t power_key_timer_ = nullptr;
+    bool wake_word_enabled_ = true;
+
+    // The PMU has no interrupt line here, so the short press is polled. Half a
+    // second is below the threshold where a button feels broken, and an I2C
+    // read every 500 ms costs far less than the idle savings it guards.
+    void InitializePowerKeyWatch() {
+        esp_timer_create_args_t timer_args = {};
+        timer_args.callback = [](void* arg) {
+            static_cast<WaveshareEsp32s3TouchAMOLED2inch06*>(arg)->PollPowerKey();
+        };
+        timer_args.arg = this;
+        timer_args.dispatch_method = ESP_TIMER_TASK;
+        timer_args.name = "pwr_key_watch";
+        timer_args.skip_unhandled_events = true;
+        ESP_ERROR_CHECK(esp_timer_create(&timer_args, &power_key_timer_));
+        ESP_ERROR_CHECK(esp_timer_start_periodic(power_key_timer_, 500000));
+    }
+
+    void PollPowerKey() {
+        if (pmic_ == nullptr || !pmic_->TakePowerKeyShortPress()) {
+            return;
+        }
+        if (power_save_timer_->IsInSleepMode()) {
+            // Screen and CPU come back, the microphone does not: the owner asked
+            // for a press that shows the menu without putting Jarvis on the air.
+            power_save_timer_->WakeUp(false);
+#ifdef CONFIG_APOLLO_PROTOCOL
+            display_->RevealMenu();
+#endif
+            return;
+        }
+        ESP_LOGI(TAG, "PWR short press: sleeping");
+        power_save_timer_->EnterSleepModeNow();
+    }
+
+    void ToggleWakeWord() {
+        wake_word_enabled_ = !wake_word_enabled_;
+        auto& app = Application::GetInstance();
+        app.GetAudioService().EnableWakeWordDetection(wake_word_enabled_);
+        ESP_LOGI(TAG, "Wake word %s", wake_word_enabled_ ? "enabled" : "disabled");
+        GetDisplay()->ShowNotification(wake_word_enabled_ ? "Hey Jarvis: ON" : "Hey Jarvis: OFF");
+    }
+
     // Blocking scan, called on the scan task only.
     void RunNetworkScan() {
         wifi_scan_config_t scan_config = {};
@@ -525,6 +604,7 @@ public:
         InitializeSH8601Display();
         InitializeTouch();
         InitializeButtons();
+        InitializePowerKeyWatch();
         InitializeTools();
 #ifdef CONFIG_APOLLO_PROTOCOL
         InitializeMenu();

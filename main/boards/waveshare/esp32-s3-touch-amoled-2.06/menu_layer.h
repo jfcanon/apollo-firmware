@@ -49,6 +49,9 @@ public:
     // Called by the board when a scan finishes. Must hold the display lock.
     void ShowNetworkList(const std::vector<Network>& network_list);
 
+    // Brings the icon row up without a tap (the PWR button does this).
+    void Reveal();
+
 private:
     static void CatcherEventCallback(lv_event_t* event);
     static void JarvisEventCallback(lv_event_t* event);
@@ -60,7 +63,6 @@ private:
     static void AutoHideTimerCallback(lv_timer_t* timer);
 
     lv_obj_t* BuildIconButton(lv_obj_t* parent, const char* symbol, const char* label_text);
-    void Reveal();
     void ShowWifiPanel();
     void ShowScanPanel();
     void ShowPasswordPanel(const std::string& ssid);

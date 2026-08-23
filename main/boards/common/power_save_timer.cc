@@ -59,9 +59,19 @@ void PowerSaveTimer::OnShutdownRequest(std::function<void()> callback) {
     on_shutdown_request_ = callback;
 }
 
+void PowerSaveTimer::EnterSleepModeNow() {
+    if (!enabled_ || in_sleep_mode_) {
+        return;
+    }
+    // Jump the countdown to its end and run the same transition the timer
+    // would: one path in, so a forced sleep and an idle sleep are identical.
+    ticks_ = seconds_to_sleep_;
+    PowerSaveCheck();
+}
+
 void PowerSaveTimer::PowerSaveCheck() {
     auto& app = Application::GetInstance();
-    if (!in_sleep_mode_ && !app.CanEnterSleepMode()) {
+    if (!in_sleep_mode_ && ticks_ < seconds_to_sleep_ && !app.CanEnterSleepMode()) {
         ticks_ = 0;
         return;
     }
@@ -103,7 +113,7 @@ void PowerSaveTimer::PowerSaveCheck() {
     }
 }
 
-void PowerSaveTimer::WakeUp() {
+void PowerSaveTimer::WakeUp(bool restore_wake_word) {
     ticks_ = 0;
     if (in_sleep_mode_) {
         ESP_LOGI(TAG, "Exiting power save mode");
@@ -118,10 +128,12 @@ void PowerSaveTimer::WakeUp() {
             esp_pm_configure(&pm_config);
 
             // Enable wake word detection
-            auto& app = Application::GetInstance();
-            auto& audio_service = app.GetAudioService();
-            if (is_wake_word_running_) {
-                audio_service.EnableWakeWordDetection(true);
+            if (restore_wake_word) {
+                auto& app = Application::GetInstance();
+                auto& audio_service = app.GetAudioService();
+                if (is_wake_word_running_) {
+                    audio_service.EnableWakeWordDetection(true);
+                }
             }
         }
 
