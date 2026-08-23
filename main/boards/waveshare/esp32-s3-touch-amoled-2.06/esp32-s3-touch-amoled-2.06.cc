@@ -24,6 +24,7 @@
 #include <esp_wifi.h>
 
 #include "menu_layer.h"
+#include "sync_box.h"
 #include "orb_face.h"
 #include <string_view>
 #include <esp_lvgl_port.h>
@@ -504,6 +505,7 @@ private:
     }
 #endif
 
+    SyncBox sync_box_;
     esp_timer_handle_t power_key_timer_ = nullptr;
     bool wake_word_enabled_ = true;
 
@@ -583,6 +585,90 @@ private:
         display_->ShowNetworkList(network_list);
     }
 
+    // The Sync Box has no cloud API and is not a bridge device, so the Worker
+    // cannot reach it; this board can, because it is already on the LAN. Every
+    // tool is device-side and the token never leaves NVS.
+    void InitializeSyncBoxTools() {
+        auto& mcp_server = McpServer::GetInstance();
+        sync_box_.LoadSettings();
+
+        mcp_server.AddTool("self.syncbox.set_address",
+            "Set the Hue Play HDMI Sync Box LAN address (its IP), e.g. 192.168.0.50.",
+            PropertyList({Property("address", kPropertyTypeString)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                sync_box_.SetAddress(properties["address"].value<std::string>());
+                return true;
+            });
+
+        mcp_server.AddTool("self.syncbox.pair",
+            "Pair with the Sync Box. The user must HOLD the button on the Sync Box for "
+            "3 seconds first; tell them to do that, then call this.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                std::string error;
+                if (!sync_box_.Register(error)) {
+                    return error;
+                }
+                return std::string("paired");
+            });
+
+        mcp_server.AddTool("self.syncbox.get_status",
+            "Read whether the Sync Box is syncing, in which mode and on which HDMI input.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                const SyncBox::Status status = sync_box_.ReadStatus();
+                if (!status.ok) {
+                    return status.error;
+                }
+                return std::string(status.syncing ? "syncing" : "idle") + ", mode " +
+                       status.mode + ", source " + status.source;
+            });
+
+        mcp_server.AddTool("self.syncbox.set_sync",
+            "Start or stop light sync on the Sync Box.",
+            PropertyList({Property("on", kPropertyTypeBoolean)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                std::string error;
+                if (!sync_box_.SetPower(properties["on"].value<bool>(), error)) {
+                    return error;
+                }
+                return true;
+            });
+
+        mcp_server.AddTool("self.syncbox.set_mode",
+            "Set the Sync Box mode: video, music, game or passthrough.",
+            PropertyList({Property("mode", kPropertyTypeString)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                std::string error;
+                if (!sync_box_.SetMode(properties["mode"].value<std::string>(), error)) {
+                    return error;
+                }
+                return true;
+            });
+
+        mcp_server.AddTool("self.syncbox.set_source",
+            "Switch the Sync Box HDMI input: input1, input2, input3 or input4.",
+            PropertyList({Property("source", kPropertyTypeString)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                std::string error;
+                if (!sync_box_.SetSource(properties["source"].value<std::string>(), error)) {
+                    return error;
+                }
+                return true;
+            });
+
+        mcp_server.AddTool("self.syncbox.set_brightness",
+            "Set Sync Box light brightness, 0 to 200.",
+            PropertyList({Property("brightness", kPropertyTypeInteger, 0, 200)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                std::string error;
+                if (!sync_box_.SetBrightness(properties["brightness"].value<int>(), error)) {
+                    return error;
+                }
+                return true;
+            });
+    }
+
     // 初始化工具
     void InitializeTools() {
         auto &mcp_server = McpServer::GetInstance();
@@ -606,6 +692,7 @@ public:
         InitializeButtons();
         InitializePowerKeyWatch();
         InitializeTools();
+        InitializeSyncBoxTools();
 #ifdef CONFIG_APOLLO_PROTOCOL
         InitializeMenu();
 #endif
