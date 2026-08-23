@@ -352,16 +352,18 @@ private:
 
         boot_button_.OnPressUp([this]() { Application::GetInstance().StopListening(); });
 
-        // Wifi config stays reachable, but not behind a long press: holding the
-        // button *is* the talk gesture, so a long press fires on every normal
-        // use. Three clicks cannot be triggered by accident that way.
-        // Holding is also the talk gesture, so the hold that toggles the wake
-        // word has to cancel the listening its own press-down started.
-        boot_button_.OnLongPress([this]() {
+        // Double click toggles the wake word. It was a long press first, but
+        // holding IS the talk gesture here: the hold started a turn every time
+        // before the toggle could fire. A double click still runs press-down
+        // twice, so the handler stops that listening before switching.
+        boot_button_.OnDoubleClick([this]() {
             Application::GetInstance().StopListening();
             ToggleWakeWord();
         });
 
+        // Wifi config stays reachable, but not behind a long press: holding the
+        // button *is* the talk gesture, so a long press fires on every normal
+        // use. Three clicks cannot be triggered by accident that way.
         boot_button_.OnMultipleClick([this]() { EnterWifiConfigMode(); }, 3);
 #else
         boot_button_.OnClick([this]() {
